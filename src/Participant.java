@@ -20,7 +20,10 @@ public class Participant {
         this.port = port;
         this.timeout = timeout;
         this.failureCondition = failureCondition;
+        run();
+    }
 
+    private void run() {
         try {
             coordSocket = new Socket("localhost", coordinatorPort);
             coordIn = new BufferedReader(new InputStreamReader(coordSocket.getInputStream()));
@@ -30,20 +33,28 @@ public class Participant {
         }
 
         connect();
+
+        // Decide how to vote
+
+        // Send and receive votes
+
+        // Majority vote them
+
+        // Finally send the outcome to the coordinator
     }
 
     private void connect() {
-        join();
+        coordOut.println("JOIN " + port);
 
-        // Get other participant details
+        try {
+            // Get other participant details
+            System.out.println(coordIn.readLine());
 
-        // Get Vote options
-
-        // Message other participants
-    }
-
-    private void join() {
-        coordOut.println("JOIN" + port);
+            // Get Vote options
+            System.out.println(coordIn.readLine());
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     /**
@@ -51,6 +62,17 @@ public class Participant {
      */
     abstract class Token {
         String message;
+    }
+
+    class VoteToken extends Token {
+        String participant;
+        String vote;
+
+        VoteToken(String message, String participant, String vote) {
+            this.message = message;
+            this.participant = participant;
+            this.vote = vote;
+        }
     }
 
     public static void main(String[] args) {

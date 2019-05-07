@@ -5,23 +5,27 @@ import java.util.*;
 
 public class Coordinator {
 
-    private int port;
     private int maxParticipants;
     private int numOfParticipants = 0;
     private ArrayList<String> options;
     private Map<String, PrintWriter> participants = Collections.synchronizedMap(new HashMap<>(maxParticipants));
 
     private Coordinator(int port, int maxParticipants, ArrayList<String> options) {
-        this.port = port;
         this.maxParticipants = maxParticipants;
         this.options = options;
 
         try {
             ServerSocket listener = new ServerSocket(port);
-            while (true) {
+            // Accept participants until the maximum is reached
+            while (numOfParticipants < this.maxParticipants) {
                 Socket participant = listener.accept();
                 new ParticipantThread(participant).start();
             }
+            // Wait until an outcome has been provided by all participants
+
+            // Apply a majority vote
+
+            // Print the result
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -44,7 +48,7 @@ public class Coordinator {
 
         public void run() {
             try {
-                Token token = null;
+                Token token;
                 token = getToken(in.readLine());
 
                 // If the first request isn't to join, close the connection
@@ -57,15 +61,15 @@ public class Coordinator {
                     participant.close();
                     return;
                 }
-                // Loop processing request
-                token = getToken(in.readLine());
-                while (true) {
+                // Get outcome from participants
 
-                }
-                // If the connection drops, unregister it
+                // Save the result to a concurrent data structure
 
             } catch (IOException e) {
-                System.err.println("I/O Exception - participant connection has been closed");
+                // If the connection drops, unregister it
+                System.err.println("Participant " + name + " connection lost");
+                participants.remove(name);
+                numOfParticipants --;
             }
         }
 
@@ -77,26 +81,18 @@ public class Coordinator {
 
             String firstToken = st.nextToken();
             if (firstToken.equals("JOIN")) {
-                    if (st.hasMoreTokens())
-                        return new JoinToken(message, st.nextToken());
-                    else
-                        return null;
+                if (st.hasMoreTokens()) return new JoinToken(message, st.nextToken());
+                else return null;
+            } else if (firstToken.equals("OUTCOME")) {
+                if (st.hasMoreTokens()) {
+                    String outcome = st.nextToken();
+                    ArrayList<String> participants = new ArrayList<>();
+                    while (st.hasMoreTokens()) {
+                        participants.add(st.nextToken());
+                    }
+                    return new OutcomeToken(message, outcome, participants);
                 }
-            /*if (firstToken.equals("YELL")) {
-                    String msg = "";
-                    while (sTokenizer.hasMoreTokens())
-                        msg += " " + sTokenizer.nextToken();
-                    return new YellToken(message, msg);
-                }
-            if (firstToken.equals("TELL")) {
-                    String name = sTokenizer.nextToken();
-                    String msg = "";
-                    while (sTokenizer.hasMoreTokens())
-                        msg += " " + sTokenizer.nextToken();
-                    return new TellToken(message, name, msg);
-                }
-            if (firstToken.equals("EXIT"))
-                    return new ExitToken(message);*/
+            }
             return null; // Ignore request
         }
 
@@ -108,7 +104,7 @@ public class Coordinator {
         }
 
         /**
-         * Syntax: JOIN &lt;name&gt;
+         * Syntax: JOIN <port>;
          */
         class JoinToken extends Token {
             String port;
@@ -118,15 +114,28 @@ public class Coordinator {
                 this.port = port;
             }
         }
+
+        /**
+         * Syntax: OUTCOME <outcome> |<contributing participants>|
+         */
+        class OutcomeToken extends Token {
+            String outcome;
+            ArrayList<String> participants;
+
+            OutcomeToken(String message, String outcome, ArrayList<String> participants) {
+                this.message = message;
+                this.outcome = outcome;
+                this.participants = participants;
+            }
+        }
     }
 
     /**
      * Register the participant and send them the details and vote options
      */
     private boolean register(String name, PrintWriter out) {
-        if (numOfParticipants >= maxParticipants) {
-            return false;
-        } if (participants.containsKey(name)) {
+        if (numOfParticipants >= maxParticipants) return false;
+        if (participants.containsKey(name)) {
             System.err.println("Port is already in use");
             return false;
         }
@@ -143,6 +152,7 @@ public class Coordinator {
             if (entry.getKey().equals(name)) break;
             participantList.append(entry.getKey()).append(" ");
         }
+        System.out.println(participantList);
         out.println("DETAILS " + participantList);
 
         // Vote options
@@ -150,13 +160,10 @@ public class Coordinator {
         for (String option : options) {
             optionsList.append(option).append(" ");
         }
-        out.println("OPTIONS " + optionsList);
+        System.out.println(optionsList);
+        out.println("VOTE_OPTIONS " + optionsList);
 
         return true;
-    }
-
-    synchronized void broadcast() {
-
     }
 
     public static void main(String[] args) {
