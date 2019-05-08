@@ -3,6 +3,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.util.*;
 
 public class Participant {
 
@@ -10,6 +11,9 @@ public class Participant {
     private int coordinatorPort;
     private int timeout;
     private int failureCondition;
+    private HashMap<String, String> votes;
+
+    private Map<String, Socket> participants = Collections.synchronizedMap(new HashMap<>());
 
     private Socket coordSocket;
     private BufferedReader coordIn;
@@ -20,6 +24,7 @@ public class Participant {
         this.port = port;
         this.timeout = timeout;
         this.failureCondition = failureCondition;
+        votes = new HashMap<>();
         run();
     }
 
@@ -44,17 +49,67 @@ public class Participant {
     }
 
     private void connect() {
+        // Send join message to the coordinator
         coordOut.println("JOIN " + port);
 
         try {
             // Get other participant details
-            System.out.println(coordIn.readLine());
+            Token token;
+            // Details token identifying the other participants
+            token = getToken(coordIn.readLine());
+            if (token != null) {
+                for (String participant : ((DetailsToken) token).participants) {
+
+                    // Add the pairing to the participant hash map
+                    participants.put(participant, );
+                }
+            }
+
 
             // Get Vote options
             System.out.println(coordIn.readLine());
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    private Token getToken(String message) {
+        StringTokenizer st = new StringTokenizer(message);
+
+        // Return null if the message is empty
+        if (!(st.hasMoreTokens())) return null;
+
+        String firstToken = st.nextToken();
+        switch (firstToken) {
+            case "DETAILS":
+                if (st.hasMoreTokens()) {
+                    ArrayList<String> participants = new ArrayList<>();
+                    while (st.hasMoreTokens()) participants.add(st.nextToken());
+                    return new DetailsToken(message, participants);
+                } else {
+                    return new DetailsToken(message, new ArrayList<>());
+                }
+            case "VOTE_OPTIONS":
+                if (st.hasMoreTokens()) {
+                    ArrayList<String> voteOptions = new ArrayList<>();
+                    while (st.hasMoreTokens()) voteOptions.add(st.nextToken());
+                    return new VoteOptionsToken(message, voteOptions);
+                } else {
+                    System.err.println("No vote options provided by coordinator");
+                    return null;
+                }
+            case "VOTE":
+                if (st.hasMoreTokens()) {
+                    HashMap<String, String> votesReceived = new HashMap<>();
+                    while (st.hasMoreTokens()) votesReceived.put(st.nextToken(), st.nextToken());
+                    return new VoteToken(message, votesReceived);
+                } else {
+                    System.err.println("No votes received from other participants. Either all participants have failed " +
+                            "or the connection has been lost");
+                    return null;
+                }
+        }
+        return null;
     }
 
     /**
@@ -64,14 +119,30 @@ public class Participant {
         String message;
     }
 
-    class VoteToken extends Token {
-        String participant;
-        String vote;
+    class DetailsToken extends Token {
+        ArrayList<String> participants;
 
-        VoteToken(String message, String participant, String vote) {
+        DetailsToken(String message, ArrayList<String> participants) {
             this.message = message;
-            this.participant = participant;
-            this.vote = vote;
+            this.participants = participants;
+        }
+    }
+
+    class VoteOptionsToken extends Token {
+        ArrayList<String> voteOptions;
+
+        VoteOptionsToken(String message, ArrayList<String> voteOptions) {
+            this.message = message;
+            this.voteOptions = voteOptions;
+        }
+    }
+
+    class VoteToken extends Token {
+        HashMap<String, String> votes;
+
+        VoteToken(String message, HashMap<String, String> votes) {
+            this.message = message;
+            this.votes = votes;
         }
     }
 

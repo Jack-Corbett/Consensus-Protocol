@@ -80,20 +80,20 @@ public class Coordinator {
             if (!(st.hasMoreTokens())) return null;
 
             String firstToken = st.nextToken();
-            if (firstToken.equals("JOIN")) {
-                if (st.hasMoreTokens()) return new JoinToken(message, st.nextToken());
-                else return null;
-            } else if (firstToken.equals("OUTCOME")) {
-                if (st.hasMoreTokens()) {
-                    String outcome = st.nextToken();
-                    ArrayList<String> participants = new ArrayList<>();
-                    while (st.hasMoreTokens()) {
-                        participants.add(st.nextToken());
+            switch (firstToken) {
+                case "JOIN":
+                    if (st.hasMoreTokens()) return new JoinToken(message, st.nextToken());
+                    else return null;
+                case "OUTCOME":
+                    if (st.hasMoreTokens()) {
+                        String outcome = st.nextToken();
+                        ArrayList<String> participants = new ArrayList<>();
+                        while (st.hasMoreTokens()) participants.add(st.nextToken());
+                        return new OutcomeToken(message, outcome, participants);
                     }
-                    return new OutcomeToken(message, outcome, participants);
-                }
+                    break;
             }
-            return null; // Ignore request
+            return null;
         }
 
         /**
