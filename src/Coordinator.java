@@ -6,46 +6,73 @@ import java.util.*;
 public class Coordinator {
 
     private int maxParticipants;
-    private int numOfParticipants = 0;
-    private ArrayList<String> options;
     private Map<String, PrintWriter> participants = Collections.synchronizedMap(new HashMap<>(maxParticipants));
 
     private Coordinator(int port, int maxParticipants, ArrayList<String> options) {
         this.maxParticipants = maxParticipants;
-        this.options = options;
 
         try {
+            System.out.println("Waiting for " + maxParticipants + " participants to join");
             ServerSocket listener = new ServerSocket(port);
             // Accept participants until the maximum is reached
-            while (numOfParticipants < this.maxParticipants) {
+            while (participants.size() < maxParticipants - 1) {
                 Socket participant = listener.accept();
-                new ParticipantThread(participant).start();
+                new Thread (new ParticipantThread(participant)).start();
             }
-            // Wait until an outcome has been provided by all participants
 
-            // Apply a majority vote
+            // TODO wait here until they are all in
 
-            // Print the result
+            try {
+                Thread.sleep(4000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+
+            System.out.println("All participants have joined");
+
+            // Once all of the participants have joined, send them all the details and vote options
+            for (Map.Entry<String, PrintWriter> participant : participants.entrySet()) {
+                PrintWriter out = participant.getValue();
+
+                // Other participants
+                StringBuilder participantList = new StringBuilder();
+                for (Map.Entry<String, PrintWriter> entry : participants.entrySet()) {
+                    if (entry.getKey().equals(participant.getKey())) break;
+                    participantList.append(entry.getKey()).append(" ");
+                }
+                System.out.println("Sending participant list to: " + participant.getKey());
+                out.println("DETAILS " + participantList);
+
+                // Vote options
+                StringBuilder optionsList = new StringBuilder();
+                for (String option : options) {
+                    optionsList.append(option).append(" ");
+                }
+                System.out.println("Sending vote options to: " + participant.getKey());
+                out.println("VOTE_OPTIONS " + optionsList);
+            }
         } catch (IOException e) {
-            e.printStackTrace();
+            System.err.println("Coordinator server socket closed");
         }
     }
 
     /**
      * Each participant has it's own thread for connecting to the coordinator
      */
-    private class ParticipantThread extends Thread {
+    private class ParticipantThread implements Runnable {
         private Socket participant;
         private String name;
         private BufferedReader in;
         private PrintWriter out;
 
         ParticipantThread(Socket participant) throws IOException {
+            System.out.println("A participant is joining");
             this.participant = participant;
             in = new BufferedReader(new InputStreamReader(participant.getInputStream()));
             out = new PrintWriter(participant.getOutputStream(), true);
         }
 
+        @Override
         public void run() {
             try {
                 Token token;
@@ -61,15 +88,19 @@ public class Coordinator {
                     participant.close();
                     return;
                 }
+
+                System.out.println("Waiting for outcome from participant: " + name);
+
                 // Get outcome from participants
+                // token = getToken(in.readLine());
 
                 // Save the result to a concurrent data structure
+                // System.out.println(token != null ? ((OutcomeToken) token).outcome : null);
 
             } catch (IOException e) {
                 // If the connection drops, unregister it
                 System.err.println("Participant " + name + " connection lost");
                 participants.remove(name);
-                numOfParticipants --;
             }
         }
 
@@ -97,7 +128,7 @@ public class Coordinator {
         }
 
         /**
-         * The Token Prototype.
+         * Token Prototype
          */
         abstract class Token {
             String message;
@@ -134,7 +165,6 @@ public class Coordinator {
      * Register the participant and send them the details and vote options
      */
     private boolean register(String name, PrintWriter out) {
-        if (numOfParticipants >= maxParticipants) return false;
         if (participants.containsKey(name)) {
             System.err.println("Port is already in use");
             return false;
@@ -144,25 +174,6 @@ public class Coordinator {
         } catch (NullPointerException e) {
             return false;
         }
-        numOfParticipants ++;
-
-        // Send the other participants to the newly registered participants
-        StringBuilder participantList = new StringBuilder();
-        for (Map.Entry<String, PrintWriter> entry : participants.entrySet()) {
-            if (entry.getKey().equals(name)) break;
-            participantList.append(entry.getKey()).append(" ");
-        }
-        System.out.println(participantList);
-        out.println("DETAILS " + participantList);
-
-        // Vote options
-        StringBuilder optionsList = new StringBuilder();
-        for (String option : options) {
-            optionsList.append(option).append(" ");
-        }
-        System.out.println(optionsList);
-        out.println("VOTE_OPTIONS " + optionsList);
-
         return true;
     }
 
