@@ -6,69 +6,122 @@ import java.util.*;
 public class Participant {
 
     private int port;
+    private int timeout;
     private String vote;
 
     private Map<String, PrintWriter> participants = Collections.synchronizedMap(new HashMap<>());
     private Map<String, String> votes = Collections.synchronizedMap(new HashMap<>());
 
+    // Coordinator details
+    private BufferedReader coordIn;
+    private PrintWriter coordOut;
+
+    private Tokeniser tokeniser;
+
     private Participant(int coordinatorPort, int port, int timeout, int failureCondition) {
+        tokeniser = new Tokeniser();
         this.port = port;
+        this.timeout = timeout;
 
         try {
             Socket coordSocket = new Socket("localhost", coordinatorPort);
-            BufferedReader coordIn = new BufferedReader(new InputStreamReader(coordSocket.getInputStream()));
-            PrintWriter coordOut = new PrintWriter(coordSocket.getOutputStream(), true);
+            coordIn = new BufferedReader(new InputStreamReader(coordSocket.getInputStream()));
+            coordOut = new PrintWriter(new OutputStreamWriter(coordSocket.getOutputStream()));
 
-            // Send join message to the coordinator
-            coordOut.println("JOIN " + port);
+            // Listen for incoming connections from the other participants
+            new Thread(() -> {
+                try {
+                    System.out.println("Listening for other participants");
+                    ServerSocket listener = new ServerSocket(port);
+                    while (true) {
+                        Socket participantSocket = listener.accept();
+                        BufferedReader in = new BufferedReader(new InputStreamReader(participantSocket.getInputStream()));
+                        new Thread(new ParticipantListener(this, in, tokeniser)).start();
+                    }
+                } catch (IOException e) {
+                    System.err.println("Failed to start thread for new participant connection");
+                }
+            }).start();
 
-            // Get other participant details
-            Token token;
+            join();
+        } catch (IOException e) {
+            System.err.println("Failed to connect to the coordinator");
+        }
+    }
+
+    private synchronized void join() {
+        System.out.println("Joining");
+        // Send join message to the coordinator
+        coordOut.println("JOIN " + port);
+        coordOut.flush();
+
+        Token token;
+        try {
             // Details token identifying the other participants
-            token = getToken(coordIn.readLine());
-            if (token != null) {
+            token = tokeniser.getToken(coordIn.readLine());
+            if (token instanceof DetailsToken) {
+                System.out.println("Connecting to other participants");
+
+                // For each participant, set up a socket to connect to them
                 for (String participant : ((DetailsToken) token).participants) {
                     Socket participantSocket = new Socket("localhost", Integer.parseInt(participant));
-                    participantSocket.setSoTimeout(timeout);
-                    PrintWriter out = new PrintWriter(participantSocket.getOutputStream(), true);
+                    // participantSocket.setSoTimeout(timeout);
+
+                    PrintWriter participantOut = new PrintWriter(participantSocket.getOutputStream(), true);
+
                     // Add the name and output channel to the participants hash map
-                    participants.put(Integer.toString(port), out);
+                    participants.put(Integer.toString(port), participantOut);
                 }
+            } else {
+                System.err.println("Failed to receive other participants details");
             }
 
             // Get vote options and decide randomly which to vote for
-            token = getToken(coordIn.readLine());
-            if (token != null) {
+            token = tokeniser.getToken(coordIn.readLine());
+            if (token instanceof VoteOptionsToken) {
+                System.out.println("Received vote options");
+
                 ArrayList<String> voteOptions = ((VoteOptionsToken) token).voteOptions;
                 vote = voteOptions.get(new Random().nextInt(voteOptions.size()));
+                votes.put(Integer.toString(port), vote);
                 System.out.println("Participant has decided to vote for: " + vote);
+            } else {
+                System.err.println("Failed to receive vote options");
             }
 
-            // Create a thread to start listening for new connections when voting begins
-            new Thread (new ParticipantListener()).start();
-
-            // VOTING now starts
-            // This thread sends its votes to others
-            for (Map.Entry<String, PrintWriter> participant : participants.entrySet()) {
-                String message = "VOTE " + participant.getKey() +  " " + vote;
-                System.out.println("Sending: " + message);
-                participant.getValue().println(message);
-            }
-
-            // TODO This is just to test
-            Thread.sleep(5000);
-
-            System.out.println(votes.toString());
-
-            // Majority vote the votes this participant has received
-            String decision = majorityVote(votes.values());
-
-            // Finally send the outcome to the coordinator
-            coordOut.println("OUTCOME " + decision);
-
-        } catch (IOException | InterruptedException e) {
+            sendVotes();
+        } catch (IOException e) {
+            System.err.println("Failed to setup connection");
             e.printStackTrace();
         }
+    }
+
+    private synchronized void sendVotes() {
+        System.out.println("Sending vote to other participants");
+        for (Map.Entry<String, PrintWriter> participant : participants.entrySet()) {
+            String message = "VOTE " + participant.getKey() +  " " + vote;
+            participant.getValue().println(message);
+        }
+    }
+
+    synchronized void registerVote(HashMap<String, String> votes) {
+        System.out.println("Registering votes from another participant");
+        this.votes.putAll(votes);
+        // TODO Change this to check you have received a vote from every participant before sending the outcome (this is where you add the timer)
+        if (this.votes.size() > participants.size()) {
+            System.out.println(this.votes.size());
+            sendOutcome();
+        }
+    }
+
+    private synchronized void sendOutcome() {
+        // Majority vote the votes this participant has received
+        String decision = majorityVote(votes.values());
+        System.out.println("Vote decision: " + decision);
+
+        // Finally send the outcome to the coordinator
+        coordOut.println("OUTCOME " + decision);
+        coordOut.flush();
     }
 
     private String majorityVote(Collection<String> votes) {
@@ -107,132 +160,6 @@ public class Participant {
             return element;
 
         return null;
-    }
-
-    /**
-     * Loop, spawning a new participant thread for every participant connection
-     */
-    private class ParticipantListener implements Runnable {
-        @Override
-        public void run() {
-            try {
-                System.out.println("Listening for votes from other participants");
-                ServerSocket listener = new ServerSocket(port);
-                while (true) {
-                    Socket participant = listener.accept();
-                    new Thread(new ParticipantThread(participant)).start();
-                }
-            } catch (IOException e) {
-                System.err.println("Failed to start new thread for new participant connection");
-            }
-        }
-    }
-
-    /**
-     * Handle incoming votes from another participant
-     */
-    private class ParticipantThread implements Runnable {
-        private Socket participant;
-
-        ParticipantThread(Socket participant) {
-            this.participant = participant;
-        }
-
-        @Override
-        public void run() {
-            try {
-                BufferedReader in = new BufferedReader(new InputStreamReader(participant.getInputStream()));
-                Token token = getVoteToken(in.readLine());
-                if (token != null) {
-                    votes.putAll(((VoteToken) token).votes);
-                }
-            } catch (IOException e) {
-                System.err.println("Reading a participants vote failed");
-            }
-        }
-
-        private Token getVoteToken(String message) {
-            StringTokenizer st = new StringTokenizer(message);
-
-            // Return null if the message is empty
-            if (!(st.hasMoreTokens())) return null;
-
-            String firstToken = st.nextToken();
-            if ("VOTE".equals(firstToken)) {
-                if (st.hasMoreTokens()) {
-                    HashMap<String, String> votesReceived = new HashMap<>();
-                    while (st.hasMoreTokens()) votesReceived.put(st.nextToken(), st.nextToken());
-                    return new VoteToken(message, votesReceived);
-                } else {
-                    System.err.println("No votes received from other participants. Either all participants have failed " +
-                            "or the connection has been lost");
-                }
-            }
-            return null;
-        }
-    }
-
-    private Token getToken(String message) {
-        StringTokenizer st = new StringTokenizer(message);
-
-        // Return null if the message is empty
-        if (!(st.hasMoreTokens())) return null;
-
-        String firstToken = st.nextToken();
-        switch (firstToken) {
-            case "DETAILS":
-                if (st.hasMoreTokens()) {
-                    ArrayList<String> participants = new ArrayList<>();
-                    while (st.hasMoreTokens()) participants.add(st.nextToken());
-                    return new DetailsToken(message, participants);
-                } else {
-                    return new DetailsToken(message, new ArrayList<>());
-                }
-            case "VOTE_OPTIONS":
-                if (st.hasMoreTokens()) {
-                    ArrayList<String> voteOptions = new ArrayList<>();
-                    while (st.hasMoreTokens()) voteOptions.add(st.nextToken());
-                    return new VoteOptionsToken(message, voteOptions);
-                } else {
-                    System.err.println("No vote options provided by coordinator");
-                    return null;
-                }
-        }
-        return null;
-    }
-
-    /**
-     * The Token Prototype.
-     */
-    abstract class Token {
-        String message;
-    }
-
-    class DetailsToken extends Token {
-        ArrayList<String> participants;
-
-        DetailsToken(String message, ArrayList<String> participants) {
-            this.message = message;
-            this.participants = participants;
-        }
-    }
-
-    class VoteOptionsToken extends Token {
-        ArrayList<String> voteOptions;
-
-        VoteOptionsToken(String message, ArrayList<String> voteOptions) {
-            this.message = message;
-            this.voteOptions = voteOptions;
-        }
-    }
-
-    class VoteToken extends Token {
-        HashMap<String, String> votes;
-
-        VoteToken(String message, HashMap<String, String> votes) {
-            this.message = message;
-            this.votes = votes;
-        }
     }
 
     public static void main(String[] args) {
