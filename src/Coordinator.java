@@ -48,9 +48,13 @@ public class Coordinator {
 
     synchronized void registerOutcome(String outcome) {
         outcomes.add(outcome);
+        System.out.println("Outcome received: " + outcome);
         if (outcomes.size() == maxParticipants) {
-            // TODO check they all match
-            System.out.println("OUTCOME: " + outcomes.get(0));
+            if (outcomes.stream().distinct().limit(2).count() <= 1) {
+                System.out.println("FINAL OUTCOME: " + outcomes.get(0));
+            } else {
+                System.err.println("Outcomes received did not all match: " + outcomes);
+            }
         }
     }
 

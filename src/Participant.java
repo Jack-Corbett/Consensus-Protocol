@@ -7,8 +7,10 @@ public class Participant {
 
     private int port;
     private int timeout;
-    private String vote;
+    private int failureCondition;
+    private boolean failures;
 
+    private Set<String> startingParticipants = new HashSet<>();
     private Map<String, PrintWriter> participants = Collections.synchronizedMap(new HashMap<>());
     private Map<String, String> votes = Collections.synchronizedMap(new HashMap<>());
 
@@ -18,10 +20,22 @@ public class Participant {
 
     private Tokeniser tokeniser;
 
+    /**
+     * A participant in the consensus vote
+     * @param coordinatorPort The port the coordinator is listening on
+     * @param port The port this participant should listen on
+     * @param timeout How long to wait for a response before dropping the socket
+     * @param failureCondition 0 - no failure, 1 - after sending it's vote to some but not all other participants,
+     *                         2 -  fails before deciding on the outcome
+     */
     private Participant(int coordinatorPort, int port, int timeout, int failureCondition) {
         tokeniser = new Tokeniser();
         this.port = port;
         this.timeout = timeout;
+        this.failureCondition = failureCondition;
+
+        // Add this as it's own starting participant
+        startingParticipants.add(Integer.toString(port));
 
         try {
             Socket coordSocket = new Socket("localhost", coordinatorPort);
@@ -36,7 +50,7 @@ public class Participant {
                     while (true) {
                         Socket participantSocket = listener.accept();
                         BufferedReader in = new BufferedReader(new InputStreamReader(participantSocket.getInputStream()));
-                        new Thread(new ParticipantListener(this, in, tokeniser)).start();
+                        new Thread(new ParticipantListener(this, Integer.toString(this.port), in, tokeniser)).start();
                     }
                 } catch (IOException e) {
                     System.err.println("Failed to start thread for new participant connection");
@@ -65,11 +79,13 @@ public class Participant {
                 // For each participant, set up a socket to connect to them
                 for (String participant : ((DetailsToken) token).participants) {
                     Socket participantSocket = new Socket("localhost", Integer.parseInt(participant));
-                    // participantSocket.setSoTimeout(timeout);
+                    participantSocket.setSoTimeout(timeout);
 
                     PrintWriter participantOut = new PrintWriter(participantSocket.getOutputStream(), true);
 
                     System.out.println("Adding participant: " + participant);
+                    // Add the name to the starting participants list
+                    startingParticipants.add(participant);
                     // Add the name and output channel to the participants hash map
                     participants.put(participant, participantOut);
                 }
@@ -83,8 +99,11 @@ public class Participant {
                 System.out.println("Received vote options");
 
                 ArrayList<String> voteOptions = ((VoteOptionsToken) token).voteOptions;
-                vote = voteOptions.get(new Random().nextInt(voteOptions.size()));
+                String vote = voteOptions.get(new Random().nextInt(voteOptions.size()));
                 System.out.println("Participant has decided to vote for: " + vote);
+
+                // Add this participants vote
+                votes.put(Integer.toString(port), vote);
             } else {
                 System.err.println("Failed to receive vote options");
             }
@@ -98,24 +117,41 @@ public class Participant {
 
     private synchronized void sendVotes() {
         System.out.println("Sending vote to other participants");
-        for (Map.Entry<String, PrintWriter> participant : participants.entrySet()) {
-            String message = "VOTE " + port +  " " + vote;
-            participant.getValue().println(message);
+        int half = participants.size()/2;
+        int count = 0;
+
+        StringBuilder voteList = new StringBuilder();
+        for (Map.Entry<String, String> vote : votes.entrySet()) {
+            voteList.append(vote.getKey()).append(" ").append(vote.getValue()).append(" ");
         }
+        String message = "VOTE " + voteList;
+
+        for (Map.Entry<String, PrintWriter> participant : participants.entrySet()) {
+            participant.getValue().println(message);
+            count ++;
+            if (failureCondition == 1 && count == half) System.exit(0);
+        }
+        if (failureCondition == 2) System.exit(0);
     }
 
     synchronized void registerVote(HashMap<String, String> votes) {
         System.out.println("Registering vote");
         this.votes.putAll(votes);
-        if (this.votes.size() == participants.size()) {
+        // If we have received a vote from all participants calculate the outcome
+        if (this.votes.keySet().equals(startingParticipants)) {
             sendOutcome();
         }
     }
 
-    private synchronized void sendOutcome() {
-        // Add this participants vote
-        votes.put(Integer.toString(port), vote);
+    synchronized void registerFailure(String name) {
+        // Remove the failed participant so we don't send any further messages to it
+        participants.remove(name);
+        // Trigger sending the votes again (another round)
+        System.out.println("Sending votes again due to failure");
+        sendVotes();
+    }
 
+    private synchronized void sendOutcome() {
         // Majority vote the votes this participant has received
         String decision = majorityVote(votes.values());
         System.out.println("Vote decision: " + decision);

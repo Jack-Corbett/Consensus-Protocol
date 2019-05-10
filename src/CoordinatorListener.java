@@ -17,15 +17,18 @@ class CoordinatorListener implements Runnable {
 
     @Override
     public void run() {
+        String message;
         try {
-            // Get outcome from participants
-            Token token = tokeniser.getToken(in.readLine());
-            if (token instanceof OutcomeToken) {
-                OutcomeToken outcomeToken = ((OutcomeToken) token);
-                coordinator.registerOutcome(outcomeToken.outcome);
+            while ((message = in.readLine()) != null) {
+                // Get outcome from participants
+                Token token = tokeniser.getToken(message);
+                if (token instanceof OutcomeToken) {
+                    OutcomeToken outcomeToken = ((OutcomeToken) token);
+                    coordinator.registerOutcome(outcomeToken.outcome);
+                }
             }
         } catch (IOException e) {
-            System.err.println("Failed to wait for outcome from participant");
+            System.err.println("A participant has disconnected");
         }
     }
 }
