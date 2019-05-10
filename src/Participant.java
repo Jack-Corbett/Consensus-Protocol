@@ -69,8 +69,9 @@ public class Participant {
 
                     PrintWriter participantOut = new PrintWriter(participantSocket.getOutputStream(), true);
 
+                    System.out.println("Adding participant: " + participant);
                     // Add the name and output channel to the participants hash map
-                    participants.put(Integer.toString(port), participantOut);
+                    participants.put(participant, participantOut);
                 }
             } else {
                 System.err.println("Failed to receive other participants details");
@@ -83,7 +84,6 @@ public class Participant {
 
                 ArrayList<String> voteOptions = ((VoteOptionsToken) token).voteOptions;
                 vote = voteOptions.get(new Random().nextInt(voteOptions.size()));
-                votes.put(Integer.toString(port), vote);
                 System.out.println("Participant has decided to vote for: " + vote);
             } else {
                 System.err.println("Failed to receive vote options");
@@ -99,22 +99,23 @@ public class Participant {
     private synchronized void sendVotes() {
         System.out.println("Sending vote to other participants");
         for (Map.Entry<String, PrintWriter> participant : participants.entrySet()) {
-            String message = "VOTE " + participant.getKey() +  " " + vote;
+            String message = "VOTE " + port +  " " + vote;
             participant.getValue().println(message);
         }
     }
 
     synchronized void registerVote(HashMap<String, String> votes) {
-        System.out.println("Registering votes from another participant");
+        System.out.println("Registering vote");
         this.votes.putAll(votes);
-        // TODO Change this to check you have received a vote from every participant before sending the outcome (this is where you add the timer)
-        if (this.votes.size() > participants.size()) {
-            System.out.println(this.votes.size());
+        if (this.votes.size() == participants.size()) {
             sendOutcome();
         }
     }
 
     private synchronized void sendOutcome() {
+        // Add this participants vote
+        votes.put(Integer.toString(port), vote);
+
         // Majority vote the votes this participant has received
         String decision = majorityVote(votes.values());
         System.out.println("Vote decision: " + decision);
