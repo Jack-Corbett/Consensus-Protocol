@@ -3,63 +3,67 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.*;
 
+/**
+ * The coordinator in a consensus vote
+ */
 public class Coordinator {
 
-    private int maxParticipants;
-    private Map<String, PrintWriter> participants = Collections.synchronizedMap(new HashMap<>(maxParticipants));
+    private int expectedParticipants;
+    private Map<String, PrintWriter> participants = Collections.synchronizedMap(new HashMap<>(expectedParticipants));
     private ArrayList<String> outcomes;
+    private ArrayList<String> options;
 
-    private Coordinator(int port, int maxParticipants, ArrayList<String> options) {
+    /**
+     * Instantiate a coordinator
+     * @param port The port this coordinator should listen on for the participants to join
+     * @param expectedParticipants The number of participants the coordinator is expecting to join
+     * @param options The voting options to be given to the participants to decide upon
+     */
+    private Coordinator(int port, int expectedParticipants, ArrayList<String> options) {
         Tokeniser tokeniser = new Tokeniser();
         outcomes = new ArrayList<>();
-        this.maxParticipants = maxParticipants;
+        this.expectedParticipants = expectedParticipants;
+        this.options = options;
 
         try {
-            System.out.println("Waiting for " + maxParticipants + " participant(s) to join");
+            System.out.println("Waiting for " + expectedParticipants + " participant(s) to join");
             ServerSocket listener = new ServerSocket(port);
 
-            // Accept participants until the maximum is reached
-            while (participants.size() < maxParticipants) {
+            // Accept participants until the expected number is reached
+            while (participants.size() < expectedParticipants) {
                 Socket participantSocket = listener.accept();
-
-                // Read the join token
+                // participantSocket.setSoLinger(true,0);
                 BufferedReader in = new BufferedReader(new InputStreamReader(participantSocket.getInputStream()));
                 PrintWriter out = new PrintWriter(new OutputStreamWriter(participantSocket.getOutputStream()));
 
+                // Read the join token
                 Token token = tokeniser.getToken(in.readLine());
 
                 if (token instanceof JoinToken) {
                     JoinToken joinToken = ((JoinToken) token);
                     register(joinToken.port, out);
 
+                    // Start a new thread to listen for the outcome from this participant
                     System.out.println("Listening for outcome from participant: " + joinToken.port);
-                    new Thread (new CoordinatorListener(this, in, tokeniser)).start();
+                    new Thread (new CoordinatorListener(this, joinToken.port, in, tokeniser)).start();
                 } else {
                     System.err.println("Participant failed to join");
                 }
             }
             System.out.println("All participants have joined");
 
-            sendVoteDetails(options);
+            // When all have joined send the lists of participants and vote options to the participants
+            sendParticipants();
+            sendVoteOptions();
         } catch (IOException e) {
             System.err.println("Coordinator server socket closed");
         }
     }
 
-    synchronized void registerOutcome(String outcome) {
-        outcomes.add(outcome);
-        System.out.println("Outcome received: " + outcome);
-        if (outcomes.size() == maxParticipants) {
-            if (outcomes.stream().distinct().limit(2).count() <= 1) {
-                System.out.println("FINAL OUTCOME: " + outcomes.get(0));
-            } else {
-                System.err.println("Outcomes received did not all match: " + outcomes);
-            }
-        }
-    }
-
-    private synchronized void sendVoteDetails(ArrayList<String> options) {
-        // Once all of the participants have joined, send them all the details and vote options
+    /**
+     * Send each participant the port numbers of the other participants so they can connect to each other directly
+     */
+    private synchronized void sendParticipants() {
         for (Map.Entry<String, PrintWriter> participant : participants.entrySet()) {
             PrintWriter out = participant.getValue();
 
@@ -74,6 +78,15 @@ public class Coordinator {
             System.out.println("Sending participant list to: " + participant.getKey() + " - " + participantList);
             out.println("DETAILS " + participantList);
             out.flush();
+        }
+    }
+
+    /**
+     * Send each participant the vote options
+     */
+    private synchronized void sendVoteOptions() {
+        for (Map.Entry<String, PrintWriter> participant : participants.entrySet()) {
+            PrintWriter out = participant.getValue();
 
             // Compile a list of vote options
             StringBuilder optionsList = new StringBuilder();
@@ -89,7 +102,67 @@ public class Coordinator {
     }
 
     /**
-     * Register the participant by adding them to the hash map
+     * Register an outcome with the coordinator
+     * @param outcome The vote the participant decided on based on all votes
+     * @param contributors A list of participants who's votes were considered in deciding the outcome
+     */
+    synchronized void registerOutcome(String outcome, ArrayList<String> contributors) {
+        outcomes.add(outcome);
+        System.out.println("Outcome received: " + outcome + " based on votes from: " + contributors);
+        if (outcomes.size() == participants.size()) {
+            printOutcome();
+        }
+    }
+
+    /**
+     * Output the outcome or restart voting if it was a tie or not all participants returned the same outcome
+     */
+    private synchronized void printOutcome() {
+        // Check all participants agree
+        if (outcomes.stream().distinct().limit(2).count() <= 1) {
+            // If they agree it was a tie restart the vote
+            if (outcomes.get(0).equals("TIE")) {
+                restartVote();
+            } else {
+                System.out.println("FINAL OUTCOME: " + outcomes.get(0));
+                System.exit(0);
+            }
+        } else {
+            System.err.println("Outcomes received did not all match: " + outcomes);
+        }
+    }
+
+    /**
+     * Restart the vote in the event of a tie outcome from all participants
+     */
+    private synchronized void restartVote() {
+        // Discard the current outcomes
+        outcomes.clear();
+        // Remove a random option
+        options.remove(new Random().nextInt(options.size()));
+        System.out.println("Triggering voting restart");
+
+        // Send the restart message to all participants
+        for (Map.Entry<String, PrintWriter> participant : participants.entrySet()) {
+            participant.getValue().println("RESTART");
+        }
+        // Resend the vote options
+        sendVoteOptions();
+    }
+
+    /**
+     * Register a participant failure to remove them from the participants map so we don't wait for an outcome from them
+     * @param name The port of the participant that has died
+     */
+    synchronized void registerFailure(String name) {
+        // Remove the failed participant so we don't wait for it to send an outcome
+        participants.remove(name);
+        // Check if you can output the final outcome in case a participant failed after all of the others had reported back
+        if (outcomes.size() == participants.size() && !outcomes.isEmpty()) printOutcome();
+    }
+
+    /**
+     * Register the participant by adding them to the participants map
      */
     private void register(String name, PrintWriter out) {
         if (participants.containsKey(name)) {
@@ -103,6 +176,10 @@ public class Coordinator {
         }
     }
 
+    /**
+     * Start a coordinator
+     * @param args Coordinator port, Expected number of participants, Vote options
+     */
     public static void main(String[] args) {
         if (args.length > 2) {
             ArrayList<String> options = new ArrayList<>(Arrays.asList(args).subList(2, args.length));

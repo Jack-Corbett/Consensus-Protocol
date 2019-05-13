@@ -18,9 +18,9 @@ class Tokeniser {
             case "OUTCOME":
                 if (st.hasMoreTokens()) {
                     String outcome = st.nextToken();
-                    ArrayList<String> participants = new ArrayList<>();
-                    while (st.hasMoreTokens()) participants.add(st.nextToken());
-                    return new OutcomeToken(message, outcome, participants);
+                    ArrayList<String> contributors = new ArrayList<>();
+                    while (st.hasMoreTokens()) contributors.add(st.nextToken());
+                    return new OutcomeToken(message, outcome, contributors);
                 }
             case "DETAILS":
                 if (st.hasMoreTokens()) {
@@ -48,6 +48,8 @@ class Tokeniser {
                     System.err.println("No votes received from other participants. Either all participants have failed " +
                             "or the connection has been lost");
                 }
+            case "RESTART":
+                return new RestartToken();
         }
         return null;
     }
@@ -115,4 +117,6 @@ class VoteToken extends Token {
         this.votes = votes;
     }
 }
+
+class RestartToken extends Token {}
 

@@ -3,14 +3,18 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.*;
 
+/**
+ * A participant in the consensus vote
+ */
 public class Participant {
 
     private int port;
     private int timeout;
     private int failureCondition;
-    private boolean failures;
 
-    private Set<String> startingParticipants = new HashSet<>();
+    private boolean outcomeSent;
+
+    private Set<String> startingParticipants = Collections.synchronizedSet(new HashSet<>());
     private Map<String, PrintWriter> participants = Collections.synchronizedMap(new HashMap<>());
     private Map<String, String> votes = Collections.synchronizedMap(new HashMap<>());
 
@@ -21,26 +25,27 @@ public class Participant {
     private Tokeniser tokeniser;
 
     /**
-     * A participant in the consensus vote
+     * Instantiates a participant
      * @param coordinatorPort The port the coordinator is listening on
      * @param port The port this participant should listen on
-     * @param timeout How long to wait for a response before dropping the socket
+     * @param timeout How long to wait after hearing no messages from other participants before closing
      * @param failureCondition 0 - no failure, 1 - after sending it's vote to some but not all other participants,
      *                         2 -  fails before deciding on the outcome
      */
     private Participant(int coordinatorPort, int port, int timeout, int failureCondition) {
         tokeniser = new Tokeniser();
+        outcomeSent = false;
         this.port = port;
         this.timeout = timeout;
         this.failureCondition = failureCondition;
-
-        // Add this as it's own starting participant
-        startingParticipants.add(Integer.toString(port));
 
         try {
             Socket coordSocket = new Socket("localhost", coordinatorPort);
             coordIn = new BufferedReader(new InputStreamReader(coordSocket.getInputStream()));
             coordOut = new PrintWriter(new OutputStreamWriter(coordSocket.getOutputStream()));
+
+            // Add this as it's own current participant
+            startingParticipants.add(Integer.toString(port));
 
             // Listen for incoming connections from the other participants
             new Thread(() -> {
@@ -49,8 +54,8 @@ public class Participant {
                     ServerSocket listener = new ServerSocket(port);
                     while (true) {
                         Socket participantSocket = listener.accept();
-                        BufferedReader in = new BufferedReader(new InputStreamReader(participantSocket.getInputStream()));
-                        new Thread(new ParticipantListener(this, Integer.toString(this.port), in, tokeniser)).start();
+                        participantSocket.setSoTimeout(timeout);
+                        new Thread(new ParticipantListener(this, participantSocket, tokeniser)).start();
                     }
                 } catch (IOException e) {
                     System.err.println("Failed to start thread for new participant connection");
@@ -63,12 +68,23 @@ public class Participant {
         }
     }
 
+    /**
+     * Connect to the coordinator
+     */
     private synchronized void join() {
         System.out.println("Joining");
         // Send join message to the coordinator
         coordOut.println("JOIN " + port);
         coordOut.flush();
 
+        getParticipantDetails();
+        getVoteOptions();
+    }
+
+    /**
+     * Receive the details of the other participants from the coordinator
+     */
+    private synchronized void getParticipantDetails() {
         Token token;
         try {
             // Details token identifying the other participants
@@ -80,6 +96,7 @@ public class Participant {
                 for (String participant : ((DetailsToken) token).participants) {
                     Socket participantSocket = new Socket("localhost", Integer.parseInt(participant));
                     participantSocket.setSoTimeout(timeout);
+                    participantSocket.setSoLinger(true,0);
 
                     PrintWriter participantOut = new PrintWriter(participantSocket.getOutputStream(), true);
 
@@ -92,7 +109,17 @@ public class Participant {
             } else {
                 System.err.println("Failed to receive other participants details");
             }
+        } catch (IOException e) {
+            System.err.println("Failed to establish connection to the coordinator");
+        }
+    }
 
+    /**
+     * Receive the vote options from the coordinator
+     */
+    private synchronized void getVoteOptions() {
+        Token token;
+        try {
             // Get vote options and decide randomly which to vote for
             token = tokeniser.getToken(coordIn.readLine());
             if (token instanceof VoteOptionsToken) {
@@ -110,14 +137,15 @@ public class Participant {
 
             sendVotes();
         } catch (IOException e) {
-            System.err.println("Failed to setup connection");
-            e.printStackTrace();
+            System.err.println();
         }
     }
 
-    private synchronized void sendVotes() {
+    /**
+     * Send votes to all other participants
+     */
+    synchronized void sendVotes() {
         System.out.println("Sending vote to other participants");
-        int half = participants.size()/2;
         int count = 0;
 
         StringBuilder voteList = new StringBuilder();
@@ -129,50 +157,100 @@ public class Participant {
         for (Map.Entry<String, PrintWriter> participant : participants.entrySet()) {
             participant.getValue().println(message);
             count ++;
-            if (failureCondition == 1 && count == half) System.exit(0);
+            if (failureCondition == 1 && count == 1) System.exit(0);
         }
         if (failureCondition == 2) System.exit(0);
     }
 
+    /**
+     * Record a vote received by a participant listener, send the outcome back to the coordinator if we have received
+     * a vote from all of the participants
+     * @param votes The votes received
+     */
     synchronized void registerVote(HashMap<String, String> votes) {
-        System.out.println("Registering vote");
-        this.votes.putAll(votes);
-        // If we have received a vote from all participants calculate the outcome
-        if (this.votes.keySet().equals(startingParticipants)) {
-            sendOutcome();
+        if (!outcomeSent) {
+            System.out.println("Registering vote");
+            this.votes.putAll(votes);
+            // If we have received a vote from all participants calculate the outcome
+            if (this.votes.keySet().equals(startingParticipants)) {
+                sendOutcome();
+            }
         }
     }
 
-    synchronized void registerFailure(String name) {
-        // Remove the failed participant so we don't send any further messages to it
-        participants.remove(name);
-        // Trigger sending the votes again (another round)
-        System.out.println("Sending votes again due to failure");
-        sendVotes();
-    }
-
+    /**
+     * Send the outcome of the vote to the coordinator
+     */
     private synchronized void sendOutcome() {
+        outcomeSent = true;
+
         // Majority vote the votes this participant has received
         String decision = majorityVote(votes.values());
-        System.out.println("Vote decision: " + decision);
 
-        // Finally send the outcome to the coordinator
-        coordOut.println("OUTCOME " + decision);
-        coordOut.flush();
+        StringBuilder contributors = new StringBuilder();
+        for (String participant : votes.keySet()) {
+            contributors.append(participant).append(" ");
+        }
+
+        if (decision != null) {
+            System.out.println("Vote decision: " + decision);
+            // Finally send the outcome to the coordinator
+            coordOut.println("OUTCOME " + decision + " " + contributors);
+            coordOut.flush();
+        } else {
+            System.out.println("Vote decision: TIE");
+            // Report the tie to the coordinator so it can resend the vote options
+            coordOut.println("OUTCOME TIE " + contributors);
+            coordOut.flush();
+            // Wait for the restart message from the coordinator
+            new Thread(this::waitForRestart).start();
+        }
     }
 
-    private String majorityVote(Collection<String> votes) {
+    /**
+     * Run in a separate thread, this waits for the restart message from the coordinator as this is sent once all
+     * participants have reported a tie
+     */
+    private void waitForRestart() {
+        Token token;
+        try {
+            // Details token identifying the other participants
+            token = tokeniser.getToken(coordIn.readLine());
+            if (token instanceof RestartToken) {
+                restartVote();
+            } else {
+                System.err.println("Restart message not received from coordinator");
+            }
+        } catch (IOException e) {
+            System.err.println("Failed to read restart message");
+        }
+    }
+
+    /**
+     * Restarts the vote by clearing the current votes and receiving the new vote options
+     */
+    private synchronized void restartVote() {
+        outcomeSent = false;
+        votes.clear();
+        getVoteOptions();
+    }
+
+    /**
+     * Majority vote the votes received to decide on a vote outcome
+     * @param values A collection of all votes received
+     * @return The majority element or null if there isn't a majority
+     */
+    private String majorityVote(Collection<String> values) {
+        ArrayList<String> votes = new ArrayList<>(values);
         String element = null;
-        String[] values = votes.toArray(new String[0]);
-        int length = values.length;
         int counter = 0;
         int index = 0;
 
-        while (index < length) {
+        while (index < votes.size()) {
             if (counter == 0) {
-                element = values[index];
+                element = votes.get(index);
                 counter++;
-            } else if (element.equals(values[index])) {
+            } else if (element.equals(votes.get(index))) {
                 counter++;
             } else {
                 counter--;
@@ -187,18 +265,22 @@ public class Participant {
 
         index = -1;
         counter = 0;
-        while (++index < length) {
-            if (element.equals(values[index])) {
+        while (++index < votes.size()) {
+            if (element.equals(votes.get(index))) {
                 counter++;
             }
         }
 
-        if (counter > length / 2)
+        if (counter > votes.size() / 2)
             return element;
 
         return null;
     }
 
+    /**
+     * Start a participant
+     * @param args Coordinator port, Participant port, Timeout in milliseconds, Failure condition
+     */
     public static void main(String[] args) {
         if (args.length == 4) {
             new Participant(Integer.parseInt(args[0]), Integer.parseInt(args[1]), Integer.parseInt(args[2]), Integer.parseInt(args[3]));

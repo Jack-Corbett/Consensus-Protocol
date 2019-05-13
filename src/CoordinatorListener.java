@@ -2,19 +2,31 @@ import java.io.BufferedReader;
 import java.io.IOException;
 
 /**
- * This is used to listen for the outcome from the participants
+ * A listener thread to wait for the outcome from a participant
  */
 class CoordinatorListener implements Runnable {
     private Coordinator coordinator;
+    private String name;
     private BufferedReader in;
     private Tokeniser tokeniser;
 
-    CoordinatorListener(Coordinator coordinator ,BufferedReader in, Tokeniser tokeniser) {
+    /**
+     * Instantiates a coordinator listener
+     * @param coordinator A reference to the coordinator this listener belongs to
+     * @param name The identifier of the socket we are listening for
+     * @param in A buffered reader for the socket
+     * @param tokeniser A reference to the tokeniser object for parsing the received messages
+     */
+    CoordinatorListener(Coordinator coordinator, String name, BufferedReader in, Tokeniser tokeniser) {
         this.coordinator = coordinator;
+        this.name = name;
         this.in = in;
         this.tokeniser = tokeniser;
     }
 
+    /**
+     * Wait for the participant outcome and pass it on to the coordinator
+     */
     @Override
     public void run() {
         String message;
@@ -24,11 +36,14 @@ class CoordinatorListener implements Runnable {
                 Token token = tokeniser.getToken(message);
                 if (token instanceof OutcomeToken) {
                     OutcomeToken outcomeToken = ((OutcomeToken) token);
-                    coordinator.registerOutcome(outcomeToken.outcome);
+                    coordinator.registerOutcome(outcomeToken.outcome, outcomeToken.participants);
                 }
             }
+            throw new IOException();
         } catch (IOException e) {
-            System.err.println("A participant has disconnected");
+            // Register the failure with the coordinator to remove the participant from the participants map
+            System.err.println("Connection to participant: " + name + " has been lost");
+            coordinator.registerFailure(name);
         }
     }
 }
