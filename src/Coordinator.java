@@ -32,7 +32,7 @@ public class Coordinator {
             // Accept participants until the expected number is reached
             while (participants.size() < expectedParticipants) {
                 Socket participantSocket = listener.accept();
-                // participantSocket.setSoLinger(true,0);
+
                 BufferedReader in = new BufferedReader(new InputStreamReader(participantSocket.getInputStream()));
                 PrintWriter out = new PrintWriter(new OutputStreamWriter(participantSocket.getOutputStream()));
 

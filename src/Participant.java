@@ -96,7 +96,6 @@ public class Participant {
                 for (String participant : ((DetailsToken) token).participants) {
                     Socket participantSocket = new Socket("localhost", Integer.parseInt(participant));
                     participantSocket.setSoTimeout(timeout);
-                    participantSocket.setSoLinger(true,0);
 
                     PrintWriter participantOut = new PrintWriter(participantSocket.getOutputStream(), true);
 

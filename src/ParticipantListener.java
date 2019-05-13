@@ -40,6 +40,7 @@ class ParticipantListener implements Runnable {
                     participant.registerVote(voteToken.votes);
                 }
             }
+            throw new IOException();
         } catch (SocketTimeoutException e) {
             // If the connection times out kill the participant as an outcome must have been decided
             System.exit(0);
