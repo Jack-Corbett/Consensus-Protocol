@@ -10,6 +10,7 @@ public class Coordinator {
 
     private int expectedParticipants;
     private Map<String, PrintWriter> participants = Collections.synchronizedMap(new HashMap<>(expectedParticipants));
+    private ArrayList<String> failedParticipants;
     private ArrayList<String> outcomes;
     private ArrayList<String> options;
 
@@ -22,6 +23,7 @@ public class Coordinator {
     private Coordinator(int port, int expectedParticipants, ArrayList<String> options) {
         Tokeniser tokeniser = new Tokeniser();
         outcomes = new ArrayList<>();
+        failedParticipants = new ArrayList<>();
         this.expectedParticipants = expectedParticipants;
         this.options = options;
 
@@ -115,13 +117,13 @@ public class Coordinator {
     }
 
     /**
-     * Output the outcome or restart voting if it was a tie or not all participants returned the same outcome
+     * Output the outcome or restart voting if it was a fail or not all participants returned the same outcome
      */
     private synchronized void printOutcome() {
         // Check all participants agree
         if (outcomes.stream().distinct().limit(2).count() <= 1) {
-            // If they agree it was a tie restart the vote
-            if (outcomes.get(0).equals("TIE")) {
+            // If they agree it was a fail restart the vote
+            if (outcomes.get(0).equals("FAIL")) {
                 restartVote();
             } else {
                 System.out.println("FINAL OUTCOME: " + outcomes.get(0));
@@ -133,7 +135,7 @@ public class Coordinator {
     }
 
     /**
-     * Restart the vote in the event of a tie outcome from all participants
+     * Restart the vote in the event of a fail outcome from all participants
      */
     private synchronized void restartVote() {
         // Discard the current outcomes
@@ -142,10 +144,16 @@ public class Coordinator {
         options.remove(new Random().nextInt(options.size()));
         System.out.println("Triggering voting restart");
 
+        StringBuilder failures = new StringBuilder();
+        for (String participant : failedParticipants) {
+            failures.append(participant).append(" ");
+        }
+
         // Send the restart message to all participants
         for (Map.Entry<String, PrintWriter> participant : participants.entrySet()) {
-            participant.getValue().println("RESTART");
+            participant.getValue().println("RESTART " + failures);
         }
+        failedParticipants.clear();
         // Resend the vote options
         sendVoteOptions();
     }
@@ -157,6 +165,7 @@ public class Coordinator {
     synchronized void registerFailure(String name) {
         // Remove the failed participant so we don't wait for it to send an outcome
         participants.remove(name);
+        failedParticipants.add(name);
         // Check if you can output the final outcome in case a participant failed after all of the others had reported back
         if (outcomes.size() == participants.size() && !outcomes.isEmpty()) printOutcome();
     }

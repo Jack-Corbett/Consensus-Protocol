@@ -2,6 +2,7 @@ import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * A participant in the consensus vote
@@ -9,14 +10,14 @@ import java.util.*;
 public class Participant {
 
     private int port;
-    private int timeout;
     private int failureCondition;
+    private int failureCount;
 
-    private boolean outcomeSent;
-
-    private Set<String> startingParticipants = Collections.synchronizedSet(new HashSet<>());
+    private AtomicBoolean outcomeSent = new AtomicBoolean(false);
+    private Set<String> currentParticipants = Collections.synchronizedSet(new HashSet<>());
     private Map<String, PrintWriter> participants = Collections.synchronizedMap(new HashMap<>());
     private Map<String, String> votes = Collections.synchronizedMap(new HashMap<>());
+    private Map<String, String> votesCache = Collections.synchronizedMap(new HashMap<>());
 
     // Coordinator details
     private BufferedReader coordIn;
@@ -34,10 +35,9 @@ public class Participant {
      */
     private Participant(int coordinatorPort, int port, int timeout, int failureCondition) {
         tokeniser = new Tokeniser();
-        outcomeSent = false;
         this.port = port;
-        this.timeout = timeout;
         this.failureCondition = failureCondition;
+        failureCount = 0;
 
         try {
             Socket coordSocket = new Socket("localhost", coordinatorPort);
@@ -45,7 +45,7 @@ public class Participant {
             coordOut = new PrintWriter(new OutputStreamWriter(coordSocket.getOutputStream()));
 
             // Add this as it's own current participant
-            startingParticipants.add(Integer.toString(port));
+            currentParticipants.add(Integer.toString(port));
 
             // Listen for incoming connections from the other participants
             new Thread(() -> {
@@ -95,13 +95,12 @@ public class Participant {
                 // For each participant, set up a socket to connect to them
                 for (String participant : ((DetailsToken) token).participants) {
                     Socket participantSocket = new Socket("localhost", Integer.parseInt(participant));
-                    participantSocket.setSoTimeout(timeout);
 
                     PrintWriter participantOut = new PrintWriter(participantSocket.getOutputStream(), true);
 
                     System.out.println("Adding participant: " + participant);
                     // Add the name to the starting participants list
-                    startingParticipants.add(participant);
+                    currentParticipants.add(participant);
                     // Add the name and output channel to the participants hash map
                     participants.put(participant, participantOut);
                 }
@@ -109,7 +108,7 @@ public class Participant {
                 System.err.println("Failed to receive other participants details");
             }
         } catch (IOException e) {
-            System.err.println("Failed to establish connection to the coordinator");
+            System.err.println("Failed to establish connection to another participant");
         }
     }
 
@@ -143,7 +142,12 @@ public class Participant {
     /**
      * Send votes to all other participants
      */
-    synchronized void sendVotes() {
+    private synchronized void sendVotes() {
+        // If this is the only participant left there is no point in sending out votes so just send the outcome
+        if (currentParticipants.size() == 1) {
+            sendOutcome();
+            System.exit(0);
+        }
         System.out.println("Sending vote to other participants");
         int count = 0;
 
@@ -167,13 +171,28 @@ public class Participant {
      * @param votes The votes received
      */
     synchronized void registerVote(HashMap<String, String> votes) {
-        if (!outcomeSent) {
+        if (!outcomeSent.get()) {
             System.out.println("Registering vote");
             this.votes.putAll(votes);
             // If we have received a vote from all participants calculate the outcome
-            if (this.votes.keySet().equals(startingParticipants)) {
+            if (this.votes.keySet().equals(currentParticipants)) {
                 sendOutcome();
             }
+        } else if (failureCount == 0) {
+            System.out.println("Caching vote");
+            votesCache.putAll(votes);
+        }
+    }
+
+    /**
+     * Register that a participant has failed
+     */
+    synchronized void registerFailure() {
+        failureCount++;
+        if (failureCount == currentParticipants.size() - 1) {
+            sendOutcome();
+        } else {
+            sendVotes();
         }
     }
 
@@ -181,7 +200,7 @@ public class Participant {
      * Send the outcome of the vote to the coordinator
      */
     private synchronized void sendOutcome() {
-        outcomeSent = true;
+        outcomeSent.set(true);
 
         // Majority vote the votes this participant has received
         String decision = majorityVote(votes.values());
@@ -197,9 +216,9 @@ public class Participant {
             coordOut.println("OUTCOME " + decision + " " + contributors);
             coordOut.flush();
         } else {
-            System.out.println("Vote decision: TIE");
+            System.out.println("Vote decision: FAIL");
             // Report the tie to the coordinator so it can resend the vote options
-            coordOut.println("OUTCOME TIE " + contributors);
+            coordOut.println("OUTCOME FAIL " + contributors);
             coordOut.flush();
             // Wait for the restart message from the coordinator
             new Thread(this::waitForRestart).start();
@@ -208,15 +227,16 @@ public class Participant {
 
     /**
      * Run in a separate thread, this waits for the restart message from the coordinator as this is sent once all
-     * participants have reported a tie
+     * participants have reported a fail (no majority)
      */
     private void waitForRestart() {
         Token token;
         try {
-            // Details token identifying the other participants
-            token = tokeniser.getToken(coordIn.readLine());
+            // Restart token
+            String message = coordIn.readLine();
+            token = tokeniser.getToken(message);
             if (token instanceof RestartToken) {
-                restartVote();
+                restartVote(((RestartToken) token).failures);
             } else {
                 System.err.println("Restart message not received from coordinator");
             }
@@ -228,9 +248,14 @@ public class Participant {
     /**
      * Restarts the vote by clearing the current votes and receiving the new vote options
      */
-    private synchronized void restartVote() {
-        outcomeSent = false;
+    private synchronized void restartVote(ArrayList<String> failures) {
+        System.out.println("Restarting Vote");
+        outcomeSent.set(false);
+        failureCount = 0;
+        for (String participant : failures) currentParticipants.remove(participant);
         votes.clear();
+        votes.putAll(votesCache);
+        votesCache.clear();
         getVoteOptions();
     }
 

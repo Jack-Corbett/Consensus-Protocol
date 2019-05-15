@@ -2,8 +2,16 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.StringTokenizer;
 
+/**
+ * A string tokeniser for messages passed between the coordinator and participants
+ */
 class Tokeniser {
 
+    /**
+     * Tokenise a message
+     * @param message The message received
+     * @return A token for the message
+     */
     Token getToken(String message) {
         StringTokenizer st = new StringTokenizer(message);
 
@@ -45,11 +53,17 @@ class Tokeniser {
                     while (st.hasMoreTokens()) votesReceived.put(st.nextToken(), st.nextToken());
                     return new VoteToken(message, votesReceived);
                 } else {
-                    System.err.println("No votes received from other participants. Either all participants have failed " +
-                            "or the connection has been lost");
+                    System.err.println("No vote details included in vote message");
                 }
             case "RESTART":
-                return new RestartToken();
+                // return new RestartToken();
+                if (st.hasMoreTokens()) {
+                    ArrayList<String> failedParticipants = new ArrayList<>();
+                    while (st.hasMoreTokens()) failedParticipants.add(st.nextToken());
+                    return new RestartToken(message, failedParticipants);
+                } else {
+                    return new RestartToken(message, new ArrayList<>());
+                }
         }
         return null;
     }
@@ -89,7 +103,7 @@ class OutcomeToken extends Token {
 }
 
 /**
- *
+ * Syntax: DETAILS |<port>|
  */
 class DetailsToken extends Token {
     ArrayList<String> participants;
@@ -100,6 +114,9 @@ class DetailsToken extends Token {
     }
 }
 
+/**
+ * Syntax: VOTE_OPTIONS |<port>|
+ */
 class VoteOptionsToken extends Token {
     ArrayList<String> voteOptions;
 
@@ -109,6 +126,9 @@ class VoteOptionsToken extends Token {
     }
 }
 
+/**
+ * Syntax: VOTE |<port> <vote>|
+ */
 class VoteToken extends Token {
     HashMap<String, String> votes;
 
@@ -118,5 +138,15 @@ class VoteToken extends Token {
     }
 }
 
-class RestartToken extends Token {}
+/**
+ * Syntax: RESTART |<port>|
+ */
+class RestartToken extends Token {
+    ArrayList<String> failures;
+
+    RestartToken(String message, ArrayList<String> failures) {
+        this.message = message;
+        this.failures = failures;
+    }
+}
 

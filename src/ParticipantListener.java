@@ -42,12 +42,12 @@ class ParticipantListener implements Runnable {
             }
             throw new IOException();
         } catch (SocketTimeoutException e) {
-            // If the connection times out kill the participant as an outcome must have been decided
+            // If the connection times out kill the participant as an outcome must have been decided as no votes have been sent
             System.exit(0);
         } catch (IOException e) {
             // This means a participant failed so we need to do another round of voting
             System.err.println("Connection to a participant has been lost");
-            participant.sendVotes();
+            participant.registerFailure();
         }
     }
 }
