@@ -58,13 +58,13 @@ public class Participant {
                         new Thread(new ParticipantListener(this, participantSocket, tokeniser)).start();
                     }
                 } catch (IOException e) {
-                    System.err.println("Failed to start thread for new participant connection");
+                    System.out.println("Failed to start thread for new participant connection");
                 }
             }).start();
 
             join();
         } catch (IOException e) {
-            System.err.println("Failed to connect to the coordinator");
+            System.out.println("Failed to connect to the coordinator");
         }
     }
 
@@ -85,15 +85,20 @@ public class Participant {
      * Receive the details of the other participants from the coordinator
      */
     private synchronized void getParticipantDetails() {
-        Token token;
+        Token token = null;
+        // Details token identifying the other participants
         try {
-            // Details token identifying the other participants
             token = tokeniser.getToken(coordIn.readLine());
-            if (token instanceof DetailsToken) {
-                System.out.println("Connecting to other participants");
+        } catch (IOException e) {
+            System.out.println("Failed to read participant details token");
+        }
+        if (token instanceof DetailsToken) {
+            System.out.println("Connecting to other participants");
 
-                // For each participant, set up a socket to connect to them
-                for (String participant : ((DetailsToken) token).participants) {
+            // For each participant, set up a socket to connect to them
+            for (String participant : ((DetailsToken) token).participants) {
+                try {
+
                     Socket participantSocket = new Socket("localhost", Integer.parseInt(participant));
 
                     PrintWriter participantOut = new PrintWriter(participantSocket.getOutputStream(), true);
@@ -103,12 +108,12 @@ public class Participant {
                     currentParticipants.add(participant);
                     // Add the name and output channel to the participants hash map
                     participants.put(participant, participantOut);
+                } catch (IOException e) {
+                    System.out.println("Failed to establish connection to another participant");
                 }
-            } else {
-                System.err.println("Failed to receive other participants details");
             }
-        } catch (IOException e) {
-            System.err.println("Failed to establish connection to another participant");
+        } else {
+            System.out.println("Failed to receive other participants details");
         }
     }
 
@@ -130,12 +135,12 @@ public class Participant {
                 // Add this participants vote
                 votes.put(Integer.toString(port), vote);
             } else {
-                System.err.println("Failed to receive vote options");
+                System.out.println("Failed to receive vote options");
             }
 
             sendVotes();
         } catch (IOException e) {
-            System.err.println();
+            System.out.println();
         }
     }
 
@@ -157,11 +162,20 @@ public class Participant {
         }
         String message = "VOTE " + voteList;
 
+        int killCount;
+        if (participants.size() - 1 > 0) {
+            killCount = participants.size() - 1;
+        } else {
+            killCount = 1;
+        }
+
         for (Map.Entry<String, PrintWriter> participant : participants.entrySet()) {
             participant.getValue().println(message);
             count ++;
-            if (failureCondition == 1 && count == 1) System.exit(0);
+            // Kill it before sending all of the votes
+            if (failureCondition == 1 && count == killCount) System.exit(0);
         }
+        // Kill it after sending the votes
         if (failureCondition == 2) System.exit(0);
     }
 
@@ -238,10 +252,10 @@ public class Participant {
             if (token instanceof RestartToken) {
                 restartVote(((RestartToken) token).failures);
             } else {
-                System.err.println("Restart message not received from coordinator");
+                System.out.println("Restart message not received from coordinator");
             }
         } catch (IOException e) {
-            System.err.println("Failed to read restart message");
+            System.out.println("Failed to read restart message");
         }
     }
 
@@ -309,7 +323,7 @@ public class Participant {
         if (args.length == 4) {
             new Participant(Integer.parseInt(args[0]), Integer.parseInt(args[1]), Integer.parseInt(args[2]), Integer.parseInt(args[3]));
         } else {
-            System.err.println("Not enough arguments provided");
+            System.out.println("Not enough arguments provided");
         }
     }
 }

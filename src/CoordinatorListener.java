@@ -42,7 +42,7 @@ class CoordinatorListener implements Runnable {
             throw new IOException();
         } catch (IOException e) {
             // Register the failure with the coordinator to remove the participant from the participants map
-            System.err.println("Connection to participant: " + name + " has been lost");
+            System.out.println("Connection to participant: " + name + " has been lost");
             coordinator.registerFailure(name);
         }
     }

@@ -46,7 +46,7 @@ class ParticipantListener implements Runnable {
             System.exit(0);
         } catch (IOException e) {
             // This means a participant failed so we need to do another round of voting
-            System.err.println("Connection to a participant has been lost");
+            System.out.println("Connection to a participant has been lost");
             participant.registerFailure();
         }
     }

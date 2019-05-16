@@ -49,7 +49,7 @@ public class Coordinator {
                     System.out.println("Listening for outcome from participant: " + joinToken.port);
                     new Thread (new CoordinatorListener(this, joinToken.port, in, tokeniser)).start();
                 } else {
-                    System.err.println("Participant failed to join");
+                    System.out.println("Participant failed to join");
                 }
             }
             System.out.println("All participants have joined");
@@ -58,7 +58,7 @@ public class Coordinator {
             sendParticipants();
             sendVoteOptions();
         } catch (IOException e) {
-            System.err.println("Coordinator server socket closed");
+            System.out.println("Coordinator server socket closed");
         }
     }
 
@@ -130,7 +130,7 @@ public class Coordinator {
                 System.exit(0);
             }
         } else {
-            System.err.println("Outcomes received did not all match: " + outcomes);
+            System.out.println("Outcomes received did not all match: " + outcomes);
         }
     }
 
@@ -175,13 +175,13 @@ public class Coordinator {
      */
     private void register(String name, PrintWriter out) {
         if (participants.containsKey(name)) {
-            System.err.println("Participant failed to join as it's port is already in use");
+            System.out.println("Participant failed to join as it's port is already in use");
             return;
         }
         try {
             participants.put(name, out);
         } catch (NullPointerException e) {
-            System.err.println("Failed to register new participant");
+            System.out.println("Failed to register new participant");
         }
     }
 
@@ -194,7 +194,7 @@ public class Coordinator {
             ArrayList<String> options = new ArrayList<>(Arrays.asList(args).subList(2, args.length));
             new Coordinator(Integer.parseInt(args[0]), Integer.parseInt(args[1]), options);
         } else {
-            System.err.println("Not enough arguments provided");
+            System.out.println("Not enough arguments provided");
         }
     }
 }
