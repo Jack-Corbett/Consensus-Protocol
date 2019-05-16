@@ -168,6 +168,7 @@ public class Coordinator {
         failedParticipants.add(name);
         // Check if you can output the final outcome in case a participant failed after all of the others had reported back
         if (outcomes.size() == participants.size() && !outcomes.isEmpty()) printOutcome();
+        if (participants.isEmpty()) System.out.println("All participants have failed");
     }
 
     /**

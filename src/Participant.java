@@ -31,7 +31,7 @@ public class Participant {
      * @param port The port this participant should listen on
      * @param timeout How long to wait after hearing no messages from other participants before closing
      * @param failureCondition 0 - no failure, 1 - after sending it's vote to some but not all other participants,
-     *                         2 -  fails before deciding on the outcome
+     *                         2 - fails before deciding on the outcome
      */
     private Participant(int coordinatorPort, int port, int timeout, int failureCondition) {
         tokeniser = new Tokeniser();
@@ -271,6 +271,10 @@ public class Participant {
         votes.putAll(votesCache);
         votesCache.clear();
         getVoteOptions();
+        // Check if it has received all of the votes in case the votes were cached
+        if (this.votes.keySet().equals(currentParticipants)) {
+            sendOutcome();
+        }
     }
 
     /**
