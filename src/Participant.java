@@ -150,6 +150,7 @@ public class Participant {
     private synchronized void sendVotes() {
         // If this is the only participant left there is no point in sending out votes so just send the outcome
         if (currentParticipants.size() == 1) {
+            System.out.println("Participant is the only one remaining, sending outcome");
             sendOutcome();
             System.exit(0);
         }
